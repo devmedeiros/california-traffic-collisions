@@ -1,0 +1,104 @@
+---
+title: "California Traffic Collisions Queries"
+output: html_notebook
+---
+
+Loading the `RSQLite` package.
+
+```{r}
+library(RSQLite)
+```
+
+Connecting to the database and saving the connection as `con`.
+
+```{r}
+con <- dbConnect(odbc::odbc(), "switrs", timeout = 10)
+```
+
+This SQL query is using the connection `con` and saving the output table as `duis.covid`. It select the **pcf_violation_category** and the count, calling it **qnty**, from the collisions table where the collision date is greater than of equals to January 26, 2020, the day of the first COVID case in California. And it group the results by the violations.
+
+```{sql connection=con, output.var = "duis.covid"}
+SELECT 
+  pcf_violation_category,
+  COUNT(*) AS qnty
+FROM 
+  collisions
+WHERE collisions.collision_date >= '2020-01-26'
+GROUP BY
+  pcf_violation_category;
+```
+
+This query does the same thing as the one above, but it selects the data from before the first case of COVID and save the output table as `duis.bcovid`.
+
+```{sql connection=con, output.var = "duis.bcovid"}
+SELECT 
+  pcf_violation_category,
+  COUNT(*) AS qnty
+FROM 
+  collisions
+WHERE collisions.collision_date < '2020-01-26'
+GROUP BY
+  pcf_violation_category;
+```
+
+After I got the DUIs tables from before and after COVID, I wanted to rewrite the violations as "DUI" and "Other" and to also calculate the proportion accordingly.
+
+```{r}
+vio_bc <- data.frame(
+  "Violation" = c("DUI", "Other"),
+  "Qnty" = c(duis.bcovid$qnty[which(duis.bcovid$pcf_violation_category == "dui")],
+             sum(duis.bcovid$qnty[which(duis.bcovid$pcf_violation_category != "dui")]) + sum(duis.bcovid$qnty[which(is.na(duis.bcovid$pcf_violation_category))])))
+
+vio_bc$Perc <- vio_bc$Qnty/sum(vio_bc$Qnty)*100
+
+vio_ac <- data.frame(
+  "Violation" = c("DUI", "Other"),
+  "Qnty" = c(duis.covid$qnty[which(duis.covid$pcf_violation_category == "dui")],
+             sum(duis.covid$qnty[which(duis.covid$pcf_violation_category != "dui")]) + sum(duis.covid$qnty[which(is.na(duis.covid$pcf_violation_category))])))
+
+vio_ac$Perc <- vio_ac$Qnty/sum(vio_ac$Qnty)*100
+```
+
+This SQL query is using the connection `con` and saving the output table as `fatality_bc`. It select the **victims.victim_degree_of_injury** calling it **Degree of Injury** and the count of **collisions.case_id**, calling it **qnty**, from the collisions table, then we have an inner join to the victims table, joining it by **case_id**. And I filter the data to show collisions that happened before the day of the first COVID case in California. Lastly it groups the results by **Degree of Injury**.
+
+```{sql connection=con, output.var = "fatality_bc"}
+SELECT 
+  victims.victim_degree_of_injury AS 'Degree of Injury',
+  COUNT(collisions.case_id) AS Qnty
+FROM collisions
+INNER JOIN victims ON victims.case_id=collisions.case_id
+WHERE collisions.collision_date < '2020-01-26'
+GROUP BY victims.victim_degree_of_injury;
+```
+
+This query does the same thing as the one before, but it saves the output table to **fatality_ac** and the date of collision must be greater than or equals to January 26, 2020.
+
+```{sql connection=con, output.var = "fatality_ac"}
+SELECT 
+  victims.victim_degree_of_injury AS 'Degree of Injury',
+  COUNT(collisions.case_id) AS Qnty
+FROM collisions
+INNER JOIN victims ON victims.case_id=collisions.case_id
+WHERE collisions.collision_date >= '2020-01-26'
+GROUP BY victims.victim_degree_of_injury;
+```
+
+I want to group the data by **death**, **some injury** and **no injury**. So I run this R code to group, sum the quantities and calculate it's percentage.
+
+```{r}
+fata_bc <- data.frame(
+  "Degree of Injury" = c("Death", "Some injury", "No injury"),
+  "Qnty" = c(fatality_bc$Qnty[which(fatality_bc$`Degree of Injury` == "killed")],
+             sum(fatality_bc$Qnty[which(fatality_bc$`Degree of Injury` != "killed" & fatality_bc$`Degree of Injury` != "no injury")]),
+             sum(fatality_bc$Qnty[which(fatality_bc$`Degree of Injury` == "no injury")])))
+
+fata_bc$Perc <- fata_bc$Qnty/sum(fata_bc$Qnty)*100
+
+fata_ac <- data.frame(
+  "Degree of Injury" = c("Death", "Some injury", "No injury"),
+  "Qnty" = c(fatality_ac$Qnty[which(fatality_ac$`Degree of Injury` == "killed")],
+             sum(fatality_ac$Qnty[which(fatality_ac$`Degree of Injury` != "killed" & fatality_ac$`Degree of Injury` != "no injury")]),
+             sum(fatality_ac$Qnty[which(fatality_ac$`Degree of Injury` == "no injury")])))
+
+fata_ac$Perc <- fata_ac$Qnty/sum(fata_ac$Qnty)*100
+```
